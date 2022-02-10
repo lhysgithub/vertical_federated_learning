@@ -1,11 +1,11 @@
-#!/usr/bin/env python
+#
 # -*- coding: utf-8 -*-
 # ---
 # @File: train_imagenet_k_party.py
-# @Author: Jiahuan Luo
-# @Institution: Webank, Shenzhen, China
-# @E-mail: jiahuanluo@webank.com
-# @Time: 2022/1/18 16:03
+# @Author: Hongyi Liu
+# @Institution: **
+# @E-mail: lhysemail@gmail.com
+# @Time: 2022/2/10 16:03
 # ---
 import os
 import sys
@@ -20,9 +20,9 @@ import argparse
 import torch.nn as nn
 import torch.utils
 import torch.backends.cudnn as cudnn
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 from models.manual_k_party import Manual_A, Manual_B
-from dataset import get_train_dataset
+from dataset import get_train_dataset, get_val_dataset
 
 parser = argparse.ArgumentParser("imagenet")
 parser.add_argument('--data', required=True, help='location of the data corpus')
@@ -61,8 +61,8 @@ fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 
 # tensorboard
-writer = SummaryWriter(log_dir=os.path.join(args.name, 'tb'))
-writer.add_text('expername', args.name, 0)
+# writer = SummaryWriter(log_dir=os.path.join(args.name, 'tb'))
+# writer.add_text('expername', args.name, 0)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -82,7 +82,7 @@ def main():
         torch.cuda.manual_seed_all(args.seed)
         logging.info('gpu device = %d' % args.gpu)
     logging.info("args = %s", args)
-    model_A = Manual_A(num_classes=120, layers=args.layers, k=args.k, in_channel=1, width=0.5)
+    model_A = Manual_A(num_classes=10, layers=args.layers, k=args.k, in_channel=1, width=0.5)
     if args.k == 1:
         model_list = [model_A]
     elif args.k == 2:
@@ -102,7 +102,8 @@ def main():
     else:
         optimizer_list = [torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay) for model in model_list]
     train_data = get_train_dataset(args.data)
-    valid_data = train_data
+    # valid_data = train_data
+    valid_data = get_val_dataset(args.data)
     train_queue = torch.utils.data.DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, drop_last=False)
 
@@ -124,7 +125,7 @@ def main():
         logging.info('epoch %d lr %e', epoch, lr)
 
         cur_step = epoch * len(train_queue)
-        writer.add_scalar('train/lr', lr, cur_step)
+        # writer.add_scalar('train/lr', lr, cur_step)
 
         train_acc, train_obj = train(train_queue, model_list, criterion, optimizer_list, epoch)
         [scheduler_list[i].step() for i in range(len(scheduler_list))]
@@ -152,7 +153,7 @@ def train(train_queue, model_list, criterion, optimizer_list, epoch):
     k = len(model_list)
 
     for step, (trn_X, trn_y) in enumerate(train_queue):
-        trn_X = torch.split(trn_X, [1, 2], dim=1)
+        trn_X = torch.split(trn_X, [1, 2], dim=1)       # 64，299，299，3 -> 64,100,299,3 + 64,199,299,3
         trn_X = [x.float().to(device) for x in trn_X]
         target = trn_y.view(-1).long().to(device)
         n = target.size(0)
@@ -160,7 +161,7 @@ def train(train_queue, model_list, criterion, optimizer_list, epoch):
         U_B_list = None
         U_B_clone_list = None
         if k > 1:
-            U_B_list = [model_list[i](trn_X[i]) for i in range(1, len(model_list))]
+            U_B_list = [model_list[i](trn_X[i]) for i in range(1, len(model_list))] #
             U_B_clone_list = [U_B.detach().clone() for U_B in U_B_list]
             U_B_clone_list = [torch.autograd.Variable(U_B, requires_grad=True) for U_B in U_B_clone_list]
         logits = model_list[0](trn_X[0], U_B_clone_list)
@@ -190,9 +191,9 @@ def train(train_queue, model_list, criterion, optimizer_list, epoch):
                 "Prec@(1,5) ({top1.avg:.1f}%, {top5.avg:.1f}%)".format(
                     epoch + 1, args.epochs, step, len(train_queue) - 1, losses=objs,
                     top1=top1, top5=top5))
-        writer.add_scalar('train/loss', objs.avg, cur_step)
-        writer.add_scalar('train/top1', top1.avg, cur_step)
-        writer.add_scalar('train/top5', top5.avg, cur_step)
+        # writer.add_scalar('train/loss', objs.avg, cur_step)
+        # writer.add_scalar('train/top1', top1.avg, cur_step)
+        # writer.add_scalar('train/top5', top5.avg, cur_step)
         cur_step += 1
     return top1.avg, objs.avg
 
@@ -225,9 +226,9 @@ def infer(valid_queue, model_list, criterion, epoch, cur_step):
                     "Prec@(1,5) ({top1.avg:.1f}%, {top5.avg:.1f}%)".format(
                         epoch + 1, args.epochs, step, len(valid_queue) - 1, losses=objs,
                         top1=top1, top5=top5))
-    writer.add_scalar('valid/loss', objs.avg, cur_step)
-    writer.add_scalar('valid/top1', top1.avg, cur_step)
-    writer.add_scalar('valid/top5', top5.avg, cur_step)
+    # writer.add_scalar('valid/loss', objs.avg, cur_step)
+    # writer.add_scalar('valid/top1', top1.avg, cur_step)
+    # writer.add_scalar('valid/top5', top5.avg, cur_step)
     return top1.avg, top5.avg, objs.avg
 
 if __name__ == '__main__':

@@ -26,7 +26,7 @@ def get_train_dataset(data_folder,):
     train_transform = transforms.Compose([
         transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
         transforms.RandomHorizontalFlip(),
-        color_transfer,
+        # color_transfer,
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         normalize,
@@ -47,7 +47,7 @@ def get_val_dataset(data_folder,):
     normalize = transforms.Normalize(mean=mean, std=std)
 
     val_transform = transforms.Compose([
-        color_transfer,
+        # color_transfer,
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         normalize,
