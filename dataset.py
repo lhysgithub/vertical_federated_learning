@@ -18,18 +18,26 @@ def get_train_dataset(data_folder,):
     """get the train loader"""
     data_folder = os.path.join(data_folder, 'train')
 
-    mean = [(0 + 100) / 2, (-86.183 + 98.233) / 2, (-107.857 + 94.478) / 2]
-    std = [(100 - 0) / 2, (86.183 + 98.233) / 2, (107.857 + 94.478) / 2]
-    color_transfer = RGB2Lab()
-    normalize = transforms.Normalize(mean=mean, std=std)
+    # mean = [(0 + 100) / 2, (-86.183 + 98.233) / 2, (-107.857 + 94.478) / 2]
+    # std = [(100 - 0) / 2, (86.183 + 98.233) / 2, (107.857 + 94.478) / 2]
+    # color_transfer = RGB2Lab()
+    # normalize = transforms.Normalize(mean=mean, std=std)
+    input_image_size = 224
+    scale = 256 / 244
 
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        # transforms.RandomResizedCrop(224),
+        # transforms.RandomHorizontalFlip(),
+        # # color_transfer,
+        # # transforms.Resize((224, 224)),
+        # transforms.ToTensor(),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                      std=[0.229, 0.224, 0.225]),
+        transforms.RandomResizedCrop(input_image_size),
         transforms.RandomHorizontalFlip(),
-        # color_transfer,
-        transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        normalize,
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
     ])
     train_dataset = ImageFolderInstance(data_folder, transform=train_transform)
     # num of samples
@@ -41,16 +49,20 @@ def get_val_dataset(data_folder,):
     """get the train loader"""
     data_folder = os.path.join(data_folder, 'val')
 
-    mean = [(0 + 100) / 2, (-86.183 + 98.233) / 2, (-107.857 + 94.478) / 2]
-    std = [(100 - 0) / 2, (86.183 + 98.233) / 2, (107.857 + 94.478) / 2]
-    color_transfer = RGB2Lab()
-    normalize = transforms.Normalize(mean=mean, std=std)
+    # mean = [(0 + 100) / 2, (-86.183 + 98.233) / 2, (-107.857 + 94.478) / 2]
+    # std = [(100 - 0) / 2, (86.183 + 98.233) / 2, (107.857 + 94.478) / 2]
+    # color_transfer = RGB2Lab()
+    # normalize = transforms.Normalize(mean=mean, std=std)
+    input_image_size = 224
+    scale = 256/244
 
     val_transform = transforms.Compose([
         # color_transfer,
-        transforms.Resize((224, 224)),
+        transforms.Resize(int(input_image_size * scale)),
+        transforms.CenterCrop(input_image_size),
         transforms.ToTensor(),
-        normalize,
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
     ])
     val_dataset = ImageFolderInstance(data_folder, transform=val_transform)
     # num of samples
