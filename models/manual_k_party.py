@@ -1,5 +1,6 @@
 import torch.nn as nn
 from . import resnet as models
+# from . import resnet_for_cifar as models
 import torch
 
 

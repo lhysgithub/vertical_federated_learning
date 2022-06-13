@@ -1,12 +1,3 @@
-#
-# -*- coding: utf-8 -*-
-# ---
-# @File: train_imagenet_k_party.py
-# @Author: Hongyi Liu
-# @Institution: **
-# @E-mail: lhysemail@gmail.com
-# @Time: 2022/2/10 16:03
-# ---
 import os
 import sys
 import numpy as np
@@ -26,6 +17,7 @@ from dataset import get_train_dataset, get_val_dataset
 from torchviz import make_dot
 from torchvision.utils import save_image
 import torch.nn.functional as F
+from torch.optim import *
 
 parser = argparse.ArgumentParser("imagenet")
 parser.add_argument('--data', required=True, help='location of the data corpus')
@@ -63,24 +55,15 @@ fh = logging.FileHandler(os.path.join(args.name, exp_name))
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 
-# tensorboard
-# writer = SummaryWriter(log_dir=os.path.join(args.name, 'tb'))
-# writer.add_text('expername', args.name, 0)
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # config
 train_model = "cloak"
 save_model_epoch = 50
 dlg_epoch = 50
-start_train_epoch = 50
+start_train_epoch = 0
 
 
 def main():
-    # if not torch.cuda.is_available():
-    #     logging.info('no gpu device available')
-    #     sys.exit(1)
-
-
     np.random.seed(args.seed)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -115,11 +98,9 @@ def main():
         optimizer_list = [torch.optim.Adam(model.parameters(), args.learning_rate, weight_decay=args.weight_decay)
                           for model in model_list]
     train_data = get_train_dataset(args.data)
-    # valid_data = train_data
     valid_data = get_val_dataset(args.data)
     train_queue = torch.utils.data.DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, drop_last=False)
-
     valid_queue = torch.utils.data.DataLoader(
         valid_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, drop_last=False)
 
@@ -133,12 +114,7 @@ def main():
 
     best_acc_top1 = 0
 
-    data_shape = (2, 224, 224)
-    data_shape = (2, 32, 32)
     Intermediate = 64
-    # Intermediate = 64
-    temp_x = torch.zeros(data_shape).repeat((args.batch_size, 1, 1, 1)).to(device)
-    temp_out = model_list[1](temp_x)
     stds = torch.ones(Intermediate, requires_grad=True)
     means = torch.zeros(Intermediate, requires_grad=True)
     optimizer_noise = torch.optim.Adam([means, stds], args.learning_rate)
@@ -147,8 +123,6 @@ def main():
     for epoch in range(start_train_epoch, args.epochs):
         lr = scheduler_list[0].get_last_lr()[0]
         logging.info('epoch %d lr %e', epoch, lr)
-
-        # writer.add_scalar('train/lr', lr, cur_step)
 
         train_acc, train_obj = train_with_noise(train_queue, model_list, criterion, optimizer_list, epoch,
                                                 means, stds, lambdaa, optimizer_noise)
@@ -194,8 +168,6 @@ def train_with_noise(train_queue, model_list, criterion, optimizer_list, epoch, 
         std = (torch.tanh(stds*-2) + torch.ones_like(stds)) / 2 # 初始值为0.5
         noise = noise * std + means
         noise = noise.repeat((trn_x.shape[0], 1)).to(device)
-        # trn_x = trn_x + noise
-        # trn_x.requires_grad_()
         # cloak
 
         trn_X = torch.split(trn_x, [1, 2], dim=1)  # 64，299，299，3 -> 64,1,224,224 + 64,2,224,224
@@ -229,30 +201,21 @@ def train_with_noise(train_queue, model_list, criterion, optimizer_list, epoch, 
         grad = torch.autograd.grad(loss, U_B_clone_list[0], retain_graph=True)[0]
         grad1 = grad.detach()
         if train_model == "cloak":
-            # grad4.requires_grad = True
-            # loss2 = torch.mean(torch.abs(grad)*torch.pow(noise, 2))*1000000 - lambdaa*torch.mean(torch.pow(noise, 2))
-            # loss2 = - lambdaa*torch.mean(torch.pow(std, 2))
-            # loss2 = - lambdaa * torch.mean(torch.log(std)) # work
-            # loss2 = torch.mean(torch.log(torch.abs(grad))*torch.log(std))
-            # grad2 = torch.pow(grad1, 2)
             grad2 = torch.nn.functional.normalize(grad1, p=2.0, dim=1, eps=1e-12, out=None)
             grad4 = torch.abs(grad2)
-            # loss2 = torch.mean(grad4 * torch.log(std)) # work
             loss2 = torch.mean(grad4.to("cpu") * torch.log(std)) - lambdaa * torch.mean(torch.log(std))
             # debug
             optimizer_noise.zero_grad()
             loss2.backward(retain_graph=True)
             optimizer_noise.step()
             # debug
-            # trn_x.grad.zero_()
         # cloak
 
         # dlg
-        if epoch != 0 and epoch % dlg_epoch == 0 and step == 0:
-            dummy_data, dummy_label = inverting_gradients_single(model_list, grad1, trn_X, target
-                                                                         , U_B_clone_list[0],model_B_weights_gradients_list[0])
-            # dummy_data, dummy_label = deep_leakage_from_gradients_single(model_list, grad1, trn_X, target
-            #                                                              , U_B_clone_list[0],model_B_weights_gradients_list[0])  # todo: test DLG
+        # if epoch != 0 and epoch % dlg_epoch == 0 and step == 0:
+        if epoch % dlg_epoch == 0 and step == 0:
+            dummy_data, dummy_label = inverting_gradients_single(model_list, grad1, trn_X, target, U_B_clone_list[0],model_B_weights_gradients_list[0])
+            # dummy_data, dummy_label = deep_leakage_from_gradients_single(model_list, grad1, trn_X, target, U_B_clone_list[0],model_B_weights_gradients_list[0])  # todo: test DLG
             original_img = trn_x[0]
             original_one_chanel_img = trn_X[1][0]
             revers_img = dummy_data[0]
@@ -261,12 +224,6 @@ def train_with_noise(train_queue, model_list, criterion, optimizer_list, epoch, 
             save_image(revers_img, f"revers_img_{epoch}.png")
         # dlg
 
-        # g_loos1 = make_dot(loss)
-        # g_loos1.render(filename='g_loos1', view=False)
-        #
-        # g_loos2 = make_dot(loss2)
-        # g_loos2.render(filename='g_loos2', view=False)
-
         nn.utils.clip_grad_norm_(model_list[0].parameters(), args.grad_clip)
         optimizer_list[0].step()
 
@@ -274,69 +231,14 @@ def train_with_noise(train_queue, model_list, criterion, optimizer_list, epoch, 
         objs.update(loss.item(), n)
         top1.update(prec1[0].item(), n)
 
-        # logging.info(
-        #     "Train: [{:2d}/{}] Step {:03d}/{:03d} Loss1 {losses.avg:.3f} "
-        #     "Prec ({top1.avg:.1f}%) Loss2 {losses2:.3f} Noise@(means,stds.mean,stds.max) ({means:.1f},{stds:.1f},{stdsmax:.1f})".format(
-        #         epoch + 1, args.epochs, step, len(train_queue) - 1, losses=objs, top1=top1,
-        #         losses2=torch.mean(loss2), means=torch.mean(means), stds=torch.mean(std), stdsmax=torch.max(std)))
         if step % args.report_freq == 0:
             logging.info(
                 "Train: [{:2d}/{}] Step {:03d}/{:03d} Loss1 {losses.avg:.3f} "
                 "Prec ({top1.avg:.1f}%) Loss2 {losses2:.3f} Noise@(means,stds.mean,stds.max) ({means:.1f},{stds:.1f},{stdsmax:.1f})".format(
                     epoch + 1, args.epochs, step, len(train_queue) - 1, losses=objs, top1=top1,
                     losses2=torch.mean(loss2), means=torch.mean(means), stds=torch.mean(std), stdsmax=torch.max(std)))
-        # writer.add_scalar('train/loss', objs.avg, cur_step)
-        # writer.add_scalar('train/top1', top1.avg, cur_step)
         cur_step += 1
     return top1.avg, objs.avg
-
-def deep_leakage_from_gradients_batch(model_list, origin_grad, origin_data, origin_label, origin_embedding):
-    dummy_data = torch.randn(origin_data[1].size(), requires_grad=True)
-    dummy_label = torch.randn(F.one_hot(origin_label).size(), requires_grad=True)
-    optimizer = torch.optim.Adam([dummy_data, dummy_label], lr=0.01)
-    criterion = cross_entropy_for_onehot
-    # criterion = torch.nn.CrossEntropyLoss()
-    epoch_up = 1000
-
-    for iters in range(epoch_up):
-        optimizer.zero_grad()
-        dummy_pred = model_list[1](dummy_data.to(device))
-        logits = model_list[0](origin_data[0], [dummy_pred])
-        # _, dummy_targe = F.softmax(dummy_label, dim=-1).max(dim=-1) # 此处产生了梯度断层
-        # dummy_targe = F.softmax(dummy_label, dim=-1)
-        # dummy_loss = criterion(logits, dummy_targe.to(device))
-        # dummy_loss = criterion(logits, dummy_targe.long().to(device))
-        dummy_loss = criterion(logits, dummy_label.to(device))
-        dummy_grad = torch.autograd.grad(dummy_loss, dummy_pred, create_graph=True)
-
-        # grad_diff = sum(((dummy_grad - origin_grad) ** 2).sum() \
-        #                 for dummy_g, origin_g in zip(dummy_grad, origin_grad))
-
-        # original DLG
-        # grad_diff = ((dummy_grad[0] - origin_grad) ** 2).sum()
-
-        dummy_pred_diff = ((origin_embedding - dummy_pred) ** 2).sum()
-
-        grad_diff = (torch.abs(dummy_grad[0] - origin_grad)).sum()*10
-
-        loss = grad_diff + dummy_pred_diff
-
-        dummy_data_diff = ((origin_data[1] - dummy_data.to(device))**2).sum()
-
-        dummy_label_diff = ((dummy_label.to(device) - F.one_hot(origin_label))**2).sum()
-
-        if iters % 100 == 0:
-            logging.info(f"DLG [{iters}/{epoch_up}] "
-                         f"loss {loss} "
-                         f"grad_diff {grad_diff} "
-                         f"dummy_pred_diff {dummy_pred_diff} "
-                         f"dummy_data_diff {dummy_data_diff} "
-                         f"dummy_label_diff {dummy_label_diff} ")
-        loss.backward()
-
-        optimizer.step()
-
-    return dummy_data, dummy_label
 
 
 def getL2NormFromTuples(tuple1,tuple2):
@@ -362,8 +264,84 @@ class TVLoss(nn.Module):
         return self.TVLoss_weight*2*(h_tv/count_h+w_tv/count_w)/batch_size
 
 
-def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch, origin_label_batch
-                                       , origin_embedding_batch, origin_model_grad):
+def reconstruction_costs(gradients, input_gradient, cost_fn='l2', indices='def', weights='equal'):
+    """Input gradient is given data."""
+    if isinstance(indices, list):
+        pass
+    elif indices == 'def':
+        indices = torch.arange(len(input_gradient))
+    elif indices == 'batch':
+        indices = torch.randperm(len(input_gradient))[:8]
+    elif indices == 'topk-1':
+        _, indices = torch.topk(torch.stack([p.norm() for p in input_gradient], dim=0), 4)
+    elif indices == 'top10':
+        _, indices = torch.topk(torch.stack([p.norm() for p in input_gradient], dim=0), 10)
+    elif indices == 'top50':
+        _, indices = torch.topk(torch.stack([p.norm() for p in input_gradient], dim=0), 50)
+    elif indices in ['first', 'first4']:
+        indices = torch.arange(0, 4)
+    elif indices == 'first5':
+        indices = torch.arange(0, 5)
+    elif indices == 'first10':
+        indices = torch.arange(0, 10)
+    elif indices == 'first50':
+        indices = torch.arange(0, 50)
+    elif indices == 'last5':
+        indices = torch.arange(len(input_gradient))[-5:]
+    elif indices == 'last10':
+        indices = torch.arange(len(input_gradient))[-10:]
+    elif indices == 'last50':
+        indices = torch.arange(len(input_gradient))[-50:]
+    else:
+        raise ValueError()
+
+    ex = input_gradient[0]
+    if weights == 'linear':
+        weights = torch.arange(len(input_gradient), 0, -1, dtype=ex.dtype, device=ex.device) / len(input_gradient)
+    elif weights == 'exp':
+        weights = torch.arange(len(input_gradient), 0, -1, dtype=ex.dtype, device=ex.device)
+        weights = weights.softmax(dim=0)
+        weights = weights / weights[0]
+    else:
+        weights = input_gradient[0].new_ones(len(input_gradient))
+
+    total_costs = 0
+    for trial_gradient in gradients:
+        pnorm = [0, 0]
+        costs = 0
+        if indices == 'topk-2':
+            _, indices = torch.topk(torch.stack([p.norm().detach() for p in trial_gradient], dim=0), 4)
+        for i in indices:
+            if cost_fn == 'l2':
+                costs += ((trial_gradient[i] - input_gradient[i]).pow(2)).sum() * weights[i]
+            elif cost_fn == 'l1':
+                costs += ((trial_gradient[i] - input_gradient[i]).abs()).sum() * weights[i]
+            elif cost_fn == 'max':
+                costs += ((trial_gradient[i] - input_gradient[i]).abs()).max() * weights[i]
+            elif cost_fn == 'sim':
+                costs -= (trial_gradient[i] * input_gradient[i]).sum() * weights[i]
+                pnorm[0] += trial_gradient[i].pow(2).sum() * weights[i]
+                pnorm[1] += input_gradient[i].pow(2).sum() * weights[i]
+            elif cost_fn == 'simlocal':
+                costs += 1 - torch.nn.functional.cosine_similarity(trial_gradient[i].flatten(),
+                                                                   input_gradient[i].flatten(),
+                                                                   0, 1e-10) * weights[i]
+        if cost_fn == 'sim':
+            costs = 1 + costs / pnorm[0].sqrt() / pnorm[1].sqrt()
+
+        # Accumulate final costs
+        total_costs += costs
+    return total_costs / len(gradients)
+
+
+def total_variation(x):
+    """Anisotropic TV."""
+    dx = torch.mean(torch.abs(x[:, :, :, :-1] - x[:, :, :, 1:]))
+    dy = torch.mean(torch.abs(x[:, :, :-1, :] - x[:, :, 1:, :]))
+    return dx + dy
+
+
+def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch, origin_label_batch, origin_embedding_batch, origin_model_grad):
     origin_grad = origin_grad_batch[0].unsqueeze(0)
     origin_data0 = origin_data_batch[0][0].unsqueeze(0)
     origin_data1 = origin_data_batch[1][0].unsqueeze(0)
@@ -372,13 +350,18 @@ def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch,
     dummy_data = torch.randn(origin_data1.size(), requires_grad=True)
     dummy_label = torch.randn(F.one_hot(origin_label, num_classes=10).size(), requires_grad=True)
     # optimizer = torch.optim.SGD([dummy_data, dummy_label], lr=0.001, momentum=0.9)
-    optimizer = torch.optim.Adam([dummy_data, dummy_label], lr=0.1)
+    # optimizer = torch.optim.SGD([dummy_data, dummy_label], lr=0.1)
+    # optimizer = torch.optim.Adam([dummy_data, dummy_label], lr=0.01)
+    optimizer = torch.optim.Adam([dummy_data], lr=0.1)
+    # scheduler = lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
+    epoch_up = 24000
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[epoch_up // 2.667, epoch_up // 1.6, epoch_up // 1.142], gamma=0.1)
     # optimizer = torch.optim.LBFGS([dummy_data, dummy_label])
     criterion = cross_entropy_for_onehot
-    epoch_up = 1000
+
     dummy_data_old = dummy_data.clone()
-    origin_data1_max = origin_data1.max()
-    origin_data1_min = origin_data1.min()
+    # origin_data1_max = origin_data1.max()
+    # origin_data1_min = origin_data1.min()
     model_list[0].eval()
     model_list[1].eval()
     model_grad_copy = []
@@ -387,11 +370,11 @@ def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch,
         model_grad_copy.append(i.detach().clone())
 
     for iters in range(epoch_up):
-        dummy_data_max = dummy_data.max()
-        dummy_data_min = dummy_data.min()
-        dummy_data_change = dummy_data - dummy_data_old
-        dummy_data_change_max = dummy_data_change.max()
-        dummy_data_change_min = dummy_data_change.min()
+        # dummy_data_max = dummy_data.max()
+        # dummy_data_min = dummy_data.min()
+        # dummy_data_change = dummy_data - dummy_data_old
+        # dummy_data_change_max = dummy_data_change.max()
+        # dummy_data_change_min = dummy_data_change.min()
         optimizer.zero_grad()
         dummy_pred = model_list[1](dummy_data.to(device))
         logits = model_list[0](origin_data0, [dummy_pred])
@@ -399,7 +382,8 @@ def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch,
         # dummy_targe = F.softmax(dummy_label, dim=-1)
         # dummy_loss = criterion(logits, dummy_targe.to(device))
         # dummy_loss = criterion(logits, dummy_targe.long().to(device))
-        dummy_loss = criterion(logits, dummy_label.to(device))
+        # dummy_loss = criterion(logits, dummy_label.to(device))
+        dummy_loss = criterion(logits, origin_label.to(device))
         dummy_grad = torch.autograd.grad(dummy_loss, dummy_pred, create_graph=True)
         dummy_model_grad = torch.autograd.grad(dummy_loss, model_list[1].parameters(), create_graph=True)
 
@@ -410,8 +394,87 @@ def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch,
         # dummy_grad_diff = ((dummy_grad[0] - origin_grad) ** 2).sum()
 
         # dummy_model_grad_diff = getL2NormFromTuples(dummy_model_grad, origin_model_grad)
-        dummy_model_grad_diff = sum(
-            ((dummy_g - origin_g) ** 2).sum() for dummy_g, origin_g in zip(dummy_model_grad, model_grad_copy))
+        # dummy_model_grad_diff = sum(((dummy_g - origin_g) ** 2).sum() for dummy_g, origin_g in zip(dummy_model_grad, model_grad_copy))
+
+        dummy_pred_diff = ((origin_embedding - dummy_pred) ** 2).sum()
+
+        dummy_grad_diff = (torch.abs(dummy_grad[0] - origin_grad)).sum() * 1
+
+        # dummy_grad_cos_diff = 1-torch.cosine_similarity(dummy_grad[0], origin_grad)
+        dummy_grad_cos_diff = reconstruction_costs(dummy_grad[0], origin_grad)
+
+        # dummy_tv_loss = tvloss(dummy_data)
+        dummy_tv_loss = total_variation(dummy_data)
+
+        dummy_data_diff = ((origin_data1 - dummy_data.to(device)) ** 2).sum()
+
+        dummy_label_diff = ((dummy_label.to(device) - F.one_hot(origin_label, num_classes=10)) ** 2).sum()
+
+        # loss = dummy_grad_cos_diff + dummy_tv_loss + dummy_grad_diff
+        # loss = dummy_grad_cos_diff + dummy_tv_loss
+        # loss = dummy_grad_diff + dummy_pred_diff + dummy_model_grad_diff
+        # loss = dummy_model_grad_diff
+        # loss = dummy_grad_cos_diff + dummy_tv_loss + dummy_grad_diff + dummy_pred_diff + dummy_model_grad_diff
+        # loss = dummy_grad_cos_diff + dummy_tv_loss+dummy_data_diff
+        loss = dummy_grad_cos_diff + 0.1*dummy_tv_loss
+
+        if iters % 100 == 0:
+            logging.info(f"DLG [{iters}/{epoch_up}] "
+                         f"loss {loss}\t"
+                         # f"dummy_grad_diff {dummy_grad_diff}\t"
+                         # f"dummy_model_grad_diff {dummy_model_grad_diff}\t"
+                         f"dummy_grad_cos_diff {dummy_grad_cos_diff.data}\t"
+                         f"dummy_tv_loss {dummy_tv_loss}\t"
+                         f"dummy_pred_diff {dummy_pred_diff}\t"
+                         f"dummy_data_diff {dummy_data_diff}\t"
+                         f"dummy_label_diff {dummy_label_diff}\t"
+                         )
+        # grad = dummy_data.grad
+        loss.backward()
+        # grad1 = dummy_data.grad
+        # grad1_max = grad1.max()
+        # grad1_min = grad1.min()
+        # dummy_data_old = dummy_data.clone()
+
+        optimizer.step()
+        scheduler.step()
+
+    model_list[0].train()
+    model_list[1].train()
+    return dummy_data, dummy_label
+
+
+def inverting_gradients_batch(model_list, origin_grad_batch, origin_data_batch, origin_label_batch, origin_embedding_batch, origin_model_grad):
+    origin_grad = origin_grad_batch[0].unsqueeze(0)
+    origin_data0 = origin_data_batch[0][0].unsqueeze(0)
+    origin_data1 = origin_data_batch[1][0].unsqueeze(0)
+    origin_label = origin_label_batch[0].unsqueeze(0)
+    origin_embedding = origin_embedding_batch[0].unsqueeze(0)
+    dummy_data = torch.randn(origin_data1.size(), requires_grad=True)
+    dummy_label = torch.randn(F.one_hot(origin_label, num_classes=10).size(), requires_grad=True)
+    # optimizer = torch.optim.SGD([dummy_data, dummy_label], lr=0.001, momentum=0.9)
+    # optimizer = torch.optim.SGD([dummy_data, dummy_label], lr=0.1)
+    optimizer = torch.optim.Adam([dummy_data, dummy_label], lr=0.01)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
+    # optimizer = torch.optim.LBFGS([dummy_data, dummy_label])
+    criterion = cross_entropy_for_onehot
+    epoch_up = 24000
+    dummy_data_old = dummy_data.clone()
+    # origin_data1_max = origin_data1.max()
+    # origin_data1_min = origin_data1.min()
+    model_list[0].eval()
+    model_list[1].eval()
+    model_grad_copy = []
+    tvloss = TVLoss()
+    for i in origin_model_grad:
+        model_grad_copy.append(i.detach().clone())
+
+    for iters in range(epoch_up):
+        optimizer.zero_grad()
+        dummy_pred = model_list[1](dummy_data.to(device))
+        logits = model_list[0](origin_data0, [dummy_pred])
+        dummy_loss = criterion(logits, dummy_label.to(device))
+        dummy_grad = torch.autograd.grad(dummy_loss, dummy_pred, create_graph=True)
 
         dummy_pred_diff = ((origin_embedding - dummy_pred) ** 2).sum()
 
@@ -421,10 +484,11 @@ def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch,
 
         dummy_tv_loss = tvloss(dummy_data)
 
+        # loss = dummy_grad_cos_diff + dummy_tv_loss + dummy_grad_diff
         loss = dummy_grad_cos_diff + dummy_tv_loss
-
         # loss = dummy_grad_diff + dummy_pred_diff + dummy_model_grad_diff
         # loss = dummy_model_grad_diff
+        # loss = dummy_grad_cos_diff + dummy_tv_loss + dummy_grad_diff + dummy_pred_diff + dummy_model_grad_diff
 
         dummy_data_diff = ((origin_data1 - dummy_data.to(device)) ** 2).sum()
 
@@ -434,104 +498,17 @@ def inverting_gradients_single(model_list, origin_grad_batch, origin_data_batch,
             logging.info(f"DLG [{iters}/{epoch_up}] "
                          f"loss {loss}\t"
                          f"dummy_grad_diff {dummy_grad_diff}\t"
-                         f"dummy_model_grad_diff {dummy_model_grad_diff}\t"
+                         # f"dummy_model_grad_diff {dummy_model_grad_diff}\t"
                          f"dummy_grad_cos_diff {dummy_grad_cos_diff.data}\t"
                          f"dummy_tv_loss {dummy_tv_loss}\t"
                          f"dummy_pred_diff {dummy_pred_diff}\t"
                          f"dummy_data_diff {dummy_data_diff}\t"
                          f"dummy_label_diff {dummy_label_diff}\t"
                          )
-        grad = dummy_data.grad
         loss.backward()
-        grad1 = dummy_data.grad
-        grad1_max = grad1.max()
-        grad1_min = grad1.min()
-        dummy_data_old = dummy_data.clone()
 
         optimizer.step()
-
-    model_list[0].train()
-    model_list[1].train()
-    return dummy_data, dummy_label
-
-
-def deep_leakage_from_gradients_single(model_list, origin_grad_batch, origin_data_batch, origin_label_batch
-                                       , origin_embedding_batch, origin_model_grad):
-    origin_grad = origin_grad_batch[0].unsqueeze(0)
-    origin_data0 = origin_data_batch[0][0].unsqueeze(0)
-    origin_data1 = origin_data_batch[1][0].unsqueeze(0)
-    origin_label = origin_label_batch[0].unsqueeze(0)
-    origin_embedding = origin_embedding_batch[0].unsqueeze(0)
-    dummy_data = torch.randn(origin_data1.size(), requires_grad=True)
-    dummy_label = torch.randn(F.one_hot(origin_label, num_classes=10).size(), requires_grad=True)
-    # optimizer = torch.optim.SGD([dummy_data, dummy_label], lr=0.001, momentum=0.9)
-    optimizer = torch.optim.SGD([dummy_data, dummy_label], lr=0.0001)
-    # optimizer = torch.optim.LBFGS([dummy_data, dummy_label])
-    criterion = cross_entropy_for_onehot
-    epoch_up = 1000
-    dummy_data_old = dummy_data.clone()
-    origin_data1_max = origin_data1.max()
-    origin_data1_min = origin_data1.min()
-    model_list[0].eval()
-    model_list[1].eval()
-    model_grad_copy = []
-    for i in origin_model_grad:
-        model_grad_copy.append(i.detach().clone())
-
-    for iters in range(epoch_up):
-        dummy_data_max = dummy_data.max()
-        dummy_data_min = dummy_data.min()
-        dummy_data_change = dummy_data - dummy_data_old
-        dummy_data_change_max = dummy_data_change.max()
-        dummy_data_change_min = dummy_data_change.min()
-        optimizer.zero_grad()
-        dummy_pred = model_list[1](dummy_data.to(device))
-        logits = model_list[0](origin_data0, [dummy_pred])
-        # _, dummy_targe = F.softmax(dummy_label, dim=-1).max(dim=-1) # 此处产生了梯度断层
-        # dummy_targe = F.softmax(dummy_label, dim=-1)
-        # dummy_loss = criterion(logits, dummy_targe.to(device))
-        # dummy_loss = criterion(logits, dummy_targe.long().to(device))
-        dummy_loss = criterion(logits, dummy_label.to(device))
-        dummy_grad = torch.autograd.grad(dummy_loss, dummy_pred, create_graph=True)
-        dummy_model_grad = torch.autograd.grad(dummy_loss, model_list[1].parameters(), create_graph=True)
-
-        # dummy_grad_diff = sum(((dummy_grad - origin_grad) ** 2).sum() \
-        #                 for dummy_g, origin_g in zip(dummy_grad, origin_grad))
-
-        # original DLG
-        # dummy_grad_diff = ((dummy_grad[0] - origin_grad) ** 2).sum()
-
-        # dummy_model_grad_diff = getL2NormFromTuples(dummy_model_grad, origin_model_grad)
-        dummy_model_grad_diff = sum(((dummy_g - origin_g)**2).sum() for dummy_g, origin_g in zip(dummy_model_grad, model_grad_copy))
-
-        dummy_pred_diff = ((origin_embedding - dummy_pred) ** 2).sum()
-
-        dummy_grad_diff = (torch.abs(dummy_grad[0] - origin_grad)).sum()*1
-
-        loss = dummy_grad_diff + dummy_pred_diff + dummy_model_grad_diff
-        # loss = dummy_model_grad_diff
-
-        dummy_data_diff = ((origin_data1 - dummy_data.to(device))**2).sum()
-
-        dummy_label_diff = ((dummy_label.to(device) - F.one_hot(origin_label, num_classes=10))**2).sum()
-
-        if iters % 100 == 0:
-            logging.info(f"DLG [{iters}/{epoch_up}] "
-                         f"loss {loss}\t"
-                         f"dummy_grad_diff {dummy_grad_diff}\t"
-                         f"dummy_model_grad_diff {dummy_model_grad_diff}\t"
-                         f"dummy_pred_diff {dummy_pred_diff}\t"
-                         f"dummy_data_diff {dummy_data_diff}\t"
-                         f"dummy_label_diff {dummy_label_diff}\t"
-            )
-        grad = dummy_data.grad
-        loss.backward()
-        grad1 = dummy_data.grad
-        grad1_max = grad1.max()
-        grad1_min = grad1.min()
-        dummy_data_old = dummy_data.clone()
-
-        optimizer.step()
+        scheduler.step()
 
     model_list[0].train()
     model_list[1].train()
@@ -568,8 +545,6 @@ def infer(valid_queue, model_list, criterion, epoch):
                     "Prec@(1,5) ({top1.avg:.1f}%)".format(
                         epoch + 1, args.epochs, step, len(valid_queue) - 1, losses=objs,
                         top1=top1))
-    # writer.add_scalar('valid/loss', objs.avg, cur_step)
-    # writer.add_scalar('valid/top1', top1.avg, cur_step)
     return top1.avg, objs.avg
 
 

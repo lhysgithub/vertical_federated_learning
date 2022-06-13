@@ -23,6 +23,7 @@ def get_train_dataset(data_folder,):
     # color_transfer = RGB2Lab()
     # normalize = transforms.Normalize(mean=mean, std=std)
     input_image_size = 224
+    # input_image_size = 32
     scale = 256 / 244
 
     train_transform = transforms.Compose([
@@ -54,6 +55,7 @@ def get_val_dataset(data_folder,):
     # color_transfer = RGB2Lab()
     # normalize = transforms.Normalize(mean=mean, std=std)
     input_image_size = 224
+    # input_image_size = 32
     scale = 256/244
 
     val_transform = transforms.Compose([
